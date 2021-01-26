@@ -325,10 +325,6 @@ let g:ycm_autoclose_preview_window_after_completion=1
 
 set termguicolors     " enable true colors support
 
-"Map F9 to execute python
-noremap <F9> :w !python %<CR>
-inoremap <F9> <ESC>:w !python %<CR>
-
 "colorcheme solarized
 let g:airline_theme='monokai_tasty'
 set background=dark
