@@ -1,38 +1,36 @@
-set nocompatible             " required
-filetype on                  " required
-
+set nocompatible              " required
+filetype off                  " required
 
 " set the runtime path to include Vundle and initialize
 set rtp+=~/.vim/bundle/Vundle.vim
 call vundle#begin()
 
-" PLUGINS
-Plugin 'itchyny/vim-gitbranch'
-Plugin 'itchyny/lightline.vim'
-Plugin 'tomtom/tcomment_vim'
-Plugin 'davidhalter/jedi-vim'
-Plugin 'honza/vim-snippets'
-Plugin 'airblade/vim-gitgutter'
-Plugin 'tpope/vim-fugitive'
+" alternatively, pass a path where Vundle should install plugins
+"call vundle#begin('~/some/path/here')
+
+" let Vundle manage Vundle, required
+Plugin 'gmarik/Vundle.vim'
 Plugin 'tmhedberg/SimpylFold'
 Plugin 'vim-scripts/indentpython.vim'
-Plugin 'nvie/vim-flake8'
+Plugin 'Valloric/YouCompleteMe'
+Plugin 'jnurmine/Zenburn'
+Plugin 'altercation/vim-colors-solarized'
 Plugin 'scrooloose/nerdtree'
 Plugin 'jistr/vim-nerdtree-tabs'
 Plugin 'kien/ctrlp.vim'
 Plugin 'Lokaltog/powerline', {'rtp': 'powerline/bindings/vim/'}
-Plugin 'vim-airline/vim-airline'
-Plugin 'vim-airline/vim-airline-themes'
-Plugin 'SirVer/ultisnips'
-Plugin 'rip-rip/clang_complete'
 Plugin 'ascenator/L9', {'name': 'newL9'}
 Plugin 'vim-scripts/FuzzyFinder'
 Plugin 'majutsushi/tagbar'
+Plugin 'itchyny/vim-gitbranch'
+Plugin 'itchyny/lightline.vim'
+Plugin 'tomtom/tcomment_vim'
+Plugin 'vim-airline/vim-airline'
+Plugin 'vim-airline/vim-airline-themes'
 Plugin 'zxqfl/tabnine-vim'
-Plugin 'gmarik/Vundle.vim'
-" Plugin 'w0rp/ale'                           " Async Lint Engine
-Plugin 'Valloric/YouCompleteMe'             " Code Completion
-Plugin 'tpope/vim-surround'                 " Parentheses, brackets, quotes, XML tags, and more
+"Plugin 'scrooloose/syntastic'
+" add all your plugins here (note older versions of Vundle
+" used Bundle instead of Plugin)
 Plugin 'flazz/vim-colorschemes'             " Colorschemes
 Plugin 'jreybert/vimagit'                   " Git Operations
 Plugin 'kien/rainbow_parentheses.vim'       " Rainbow Parentheses
@@ -53,6 +51,10 @@ Plug 'mhinz/vim-startify'
 Plug 'kkoomen/vim-doge'
 Plug 'patstockwell/vim-monokai-tasty'
 call plug#end()
+" ...
+
+" All of your Plugins must be added before the following line
+call vundle#end()            " required
 
 "=====================================================
 "" General settings
@@ -63,6 +65,7 @@ endif
 set t_Co=256                                " 256 colors
 set guifont=mononoki\ Nerd\ Font\ 18
 syntax enable                               " enable syntax highlighting
+let mapleader = ';'
 
 
 " PEP 8 Indentation and encoding
@@ -328,13 +331,16 @@ set termguicolors     " enable true colors support
 "colorcheme solarized
 let g:airline_theme='monokai_tasty'
 set background=dark
-"Set this. Airline will handle the rest.
+" Set this. Airline will handle the rest.
 
 map <leader>g  :YcmCompleter GoToDefinitionElseDeclaration<CR>
 " add all your plugins here (note older versions of Vundle
 " used Bundle instead of Plugin)
 
+filetype plugin indent on    " required
 
-" All of your Plugins must be added before the following line
-call vundle#end()            " required
+set clipboard=unnamed
+
+set tags=tags
+
 filetype plugin indent on    " required
