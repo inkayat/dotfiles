@@ -1,0 +1,7 @@
+# Enabled Herdr GitHub plugins, pinned to installed commits.
+# Format: <owner/repo> <commit>
+# Installed with: herdr plugin install --ref <commit> --yes <owner/repo>
+plannotator/herdr-annotate 7c8f5a177b8285dc56efc471ef04f7ab44a2b4b6
+jeffarese/herdr-bar b57aa342f88f9db78f3deb20629ccebf162a6f57
+persiyanov/herdr-reviewr dca1fb88a56c0d6246a2e9004ecbe27fd11a4436
+senna-lang/herdr-agent-usage cfd84237738c3e653274b4f0090cf1ab779234e8

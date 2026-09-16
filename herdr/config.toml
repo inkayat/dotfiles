@@ -1,0 +1,83 @@
+onboarding = false
+
+[ui]
+agent_panel_sort = "spaces"
+
+[[keys.command]]
+key = ["prefix+k", "ctrl+alt+k"]
+type = "plugin_action"
+command = "herdr-bar.open"
+description = "Herdr Bar: quick switch"
+
+[[keys.command]]
+key = "ctrl+shift+u"
+type = "plugin_action"
+command = "usagebar.open-limits"
+description = "Agent Usage: open limits pane"
+
+[[keys.command]]
+key = "ctrl+shift+m"
+type = "plugin_action"
+command = "usagebar.refresh"
+description = "Agent Usage: refresh sidebar meters"
+
+
+# ─────────────────────────────────────
+# HERDR ANNOTATE
+# ─────────────────────────────────────
+
+# Terminalde seçtiğin metne yorum ekle
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "annotate.capture"
+description = "annotate text"
+
+# Tüm annotation'ları Markdown olarak kopyala
+[[keys.command]]
+key = "prefix+shift+a"
+type = "plugin_action"
+command = "annotate.copy-context"
+description = "copy annotations as context"
+
+# Kopyala + archive et
+[[keys.command]]
+key = "prefix+ctrl+a"
+type = "plugin_action"
+command = "annotate.copy-archive"
+description = "copy annotations and archive"
+
+# Annotation manager
+[[keys.command]]
+key = "prefix+m"
+type = "plugin_action"
+command = "annotate.manage"
+description = "manage annotations"
+
+# Bu repo/folder içindeki dokümanları review et
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "annotate.open"
+description = "review documents"
+
+# Agent'ın son cevabını review et
+[[keys.command]]
+key = "prefix+shift+o"
+type = "plugin_action"
+command = "annotate.last"
+description = "review agent reply"
+
+
+# ─────────────────────────────────────
+# HERDR REVIEWR
+# ─────────────────────────────────────
+
+[[keys.command]]
+key = "cmd+r"
+type = "plugin_action"
+command = "persiyanov.reviewr.toggle"
+description = "toggle code review"
+
+[experimental]
+kitty_graphics = true
