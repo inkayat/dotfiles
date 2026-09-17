@@ -1,0 +1,75 @@
+#!/bin/sh
+# Minimal stand-in for the real `herdr` CLI (v0.9.0), reproducing only the
+# argument-parsing behavior needed to test install.sh:
+#
+#   herdr plugin install <owner>/<repo>[/subdir...] [--ref REF] [--yes]
+#
+# The real CLI requires the positional <owner>/<repo> argument to come
+# BEFORE any options. If an option is given first, it fails with a usage
+# error and exit code 2 -- it does NOT skip the bad option and keep going.
+#
+# Logs successful installs to $HERDR_STUB_LOG (one "owner/repo ref" line each)
+# so tests can assert on what actually got installed.
+set -eu
+
+config_root=${XDG_CONFIG_HOME:-$HOME/.config}/herdr
+
+case "${1:-}" in
+    plugin)
+        shift
+        case "${1:-}" in
+            install)
+                shift
+                case "${1:-}" in
+                    ''|--*)
+                        echo "usage: herdr plugin install <owner>/<repo>[/subdir...]" >&2
+                        exit 2
+                        ;;
+                esac
+                repo=$1
+                shift
+                ref=""
+                while [ $# -gt 0 ]; do
+                    case "$1" in
+                        --ref) ref=$2; shift 2 ;;
+                        --yes|-y) shift ;;
+                        *) echo "herdr-stub: unexpected arg $1" >&2; exit 2 ;;
+                    esac
+                done
+                mkdir -p -- "$config_root"
+                echo "$repo $ref" >>"${HERDR_STUB_LOG:?HERDR_STUB_LOG not set}"
+                exit 0
+                ;;
+            config-dir)
+                shift
+                plugin_id=$1
+                dir="$config_root/plugins/config/$plugin_id"
+                mkdir -p -- "$dir"
+                echo "$dir"
+                exit 0
+                ;;
+            *)
+                echo "herdr-stub: unsupported plugin subcommand: ${1:-}" >&2
+                exit 2
+                ;;
+        esac
+        ;;
+    config)
+        shift
+        case "${1:-}" in
+            check) exit 0 ;;
+            *) echo "herdr-stub: unsupported config subcommand: ${1:-}" >&2; exit 2 ;;
+        esac
+        ;;
+    server)
+        shift
+        case "${1:-}" in
+            reload-config) exit 1 ;; # simulate: no server running, not a failure
+            *) echo "herdr-stub: unsupported server subcommand: ${1:-}" >&2; exit 2 ;;
+        esac
+        ;;
+    *)
+        echo "herdr-stub: unsupported command: ${1:-}" >&2
+        exit 2
+        ;;
+esac

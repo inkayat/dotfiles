@@ -30,7 +30,7 @@ while IFS=' ' read -r repo ref || [ -n "$repo" ]; do
         ''|'#'*) continue ;;
     esac
     echo "install.sh: installing $repo @ $ref"
-    herdr plugin install --ref "$ref" --yes "$repo"
+    herdr plugin install "$repo" --ref "$ref" --yes
 done <"$manifest"
 
 # --- Apply main config ---
