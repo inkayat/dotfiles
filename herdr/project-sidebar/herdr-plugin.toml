@@ -1,0 +1,30 @@
+id = "fm.project-sidebar"
+name = "FirstMate projects"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Read-only project folder tree of FirstMate agents. Not a native sidebar section."
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "tree"
+title = "Projects"
+placement = "split"
+command = ["sh", "bin/run.sh", "tree"]
+
+[[actions]]
+id = "open-tree"
+title = "Open project tree"
+contexts = ["workspace"]
+command = ["sh", "bin/run.sh", "open-tree"]
+
+[[actions]]
+id = "reconcile"
+title = "Reconcile FirstMate project labels"
+contexts = ["workspace"]
+command = ["sh", "bin/run.sh", "reconcile"]
+
+[[actions]]
+id = "clear"
+title = "Clear FirstMate project labels"
+contexts = ["workspace"]
+command = ["sh", "bin/run.sh", "clear"]
