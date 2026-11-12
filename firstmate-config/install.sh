@@ -25,9 +25,20 @@
 # What it never does: store a credential, touch a project repository, or modify
 # anything tracked in the official FirstMate checkout.
 #
+# --core reconciles the separate fm-core profile instead: Herdr app /
+# herdr-core (backend hc) beside the classic Herdr one, sharing this
+# configuration. It owns only ~/.firstmate-core, its own FirstMate checkout
+# ~/Developer/tools/firstmate-core, ~/.config/firstmate-config/core.env and the
+# fm-core launcher, runs steps 1-6 and 8 against them, and never reads
+# FIRSTMATE_ROOT, FM_HOME or FM_CONFIG_ENV: a shell started from a classic
+# Captain exports those, and honoring them would install into the classic
+# instance. Step 7's user-level stores are shared with fm and reconciled only
+# without --core.
+#
 # Usage:
-#   ./install.sh            reconcile
-#   ./install.sh --verify   report drift without changing anything
+#   ./install.sh                   reconcile
+#   ./install.sh --verify          report drift without changing anything
+#   ./install.sh --core [--verify] the same for the fm-core profile
 set -u
 
 CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,10 +48,28 @@ if ! stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv"; then
   printf 'install: %s\n' "$SM_LOAD_ERROR" >&2
   exit 1
 fi
-FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
-FM_HOME="${FM_HOME:-$HOME/.firstmate}"
-FM_BACKEND=herdr
-ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+VERIFY=0
+CORE=0
+for arg in "$@"; do
+  case $arg in
+    --verify) VERIFY=1 ;;
+    --core) CORE=1 ;;
+  esac
+done
+
+if [ "$CORE" -eq 1 ]; then
+  FIRSTMATE_ROOT="$HOME/Developer/tools/firstmate-core"
+  FM_HOME="$HOME/.firstmate-core"
+  FM_BACKEND=hc
+  ENV_FILE="$HOME/.config/firstmate-config/core.env"
+  LAUNCHER=fm-core
+else
+  FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+  FM_HOME="${FM_HOME:-$HOME/.firstmate}"
+  FM_BACKEND=herdr
+  ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+  LAUNCHER=fm
+fi
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
 COMMANDS_ROOT="${FM_COMMANDS_ROOT:-$HOME/.agents/commands}"
 PI_PROMPTS_ROOT="${FM_PI_PROMPTS_ROOT:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/prompts}"
@@ -51,9 +80,6 @@ BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
 # (an existing official checkout it never updates); a clone still needs a
 # real write, which this setting does not affect.
 export GIT_OPTIONAL_LOCKS=0
-
-VERIFY=0
-[ "${1:-}" != --verify ] || VERIFY=1
 
 changed=0
 failed=0
@@ -72,7 +98,10 @@ would() { # <description>
 
 # --- 1. toolchain -----------------------------------------------------------
 step '1. toolchain'
-for tool in git pi omp herdr; do
+# The core profile's workers run on herdr-core, not the classic herdr CLI.
+required='git pi omp herdr'
+[ "$CORE" -eq 0 ] || required='git pi omp'
+for tool in $required; do
   if command -v "$tool" >/dev/null 2>&1; then
     ok "$tool present"
   else
@@ -86,6 +115,15 @@ for tool in jq treehouse gh bun; do
     warn "$tool is not on PATH; it is needed for full fleet behavior"
   fi
 done
+if [ "$CORE" -eq 1 ]; then
+  # FirstMate's hc backend resolves the same names and refuses an hc spawn
+  # itself when none is usable, too old, or speaks another protocol.
+  if command -v "${FM_HC_BIN:-herdr-core}" >/dev/null 2>&1 || command -v hc >/dev/null 2>&1; then
+    ok 'herdr-core present'
+  else
+    warn 'herdr-core (or hc, or FM_HC_BIN) is not on PATH; FirstMate refuses hc workers without it'
+  fi
+fi
 [ "$failed" -eq 0 ] || { printf '\ninstall: missing required tools\n' >&2; exit 1; }
 
 # --- 2. FirstMate distribution -----------------------------------------------
@@ -102,7 +140,7 @@ if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
   case $relation in
     exact) ok "matches the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
     descendant) warn "ahead of the validated baseline commit $SM_FIRSTMATE_COMMIT (unvalidated; not changed automatically)" ;;
-    ancestor) warn "behind the validated baseline commit $SM_FIRSTMATE_COMMIT (not updated automatically; fm update fast-forwards it)" ;;
+    ancestor) warn "behind the validated baseline commit $SM_FIRSTMATE_COMMIT (not updated automatically; $LAUNCHER update fast-forwards it)" ;;
     diverged) warn "history has diverged from the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
     *) warn "relationship to the validated baseline commit $SM_FIRSTMATE_COMMIT is unknown (that commit is not in this checkout's local history)" ;;
   esac
@@ -283,6 +321,9 @@ fi
 
 # --- 7. global skills, slash commands and role agents -------------------------
 step '7. global skills, slash commands and role agents'
+if [ "$CORE" -eq 1 ]; then
+  ok 'shared with fm; reconciled by install.sh without --core, never by --core'
+else # classic profile only; the body keeps its original indentation
 mkdir -p "$SKILLS_ROOT" 2>/dev/null || true
 
 for skill_dir in "$CONFIG_ROOT"/skills/*/; do
@@ -360,10 +401,11 @@ else
   addy_refs="$SKILL_CACHE/addyosmani-agent-skills/references"
   [ ! -d "$addy_refs" ] || link_to "$addy_refs" "$(dirname "$SKILLS_ROOT")/references"
 fi
+fi # classic profile only
 
 # --- 8. command launchers ---------------------------------------------------
 step '8. command launchers'
-link_to "$CONFIG_ROOT/bin/fm" "$BIN_DIR/fm"
+link_to "$CONFIG_ROOT/bin/$LAUNCHER" "$BIN_DIR/$LAUNCHER"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ok "$BIN_DIR is on PATH" ;;
   *) warn "$BIN_DIR is not on PATH; add it to your shell profile" ;;

@@ -80,14 +80,30 @@
 #                         instructions until restarted (end it, run fm again)
 #   fm update --check     check local guards/source/branch; no fetch/update/install
 #   fm --help
+#
+# fm-core (bin/fm-core, a link to this file) is the same launcher for the
+# separate Herdr app / herdr-core profile installed by install.sh --core. The
+# name along the link chain selects it; nothing inherited from the environment
+# can. It sources only ~/.config/firstmate-config/core.env and never the
+# classic FIRSTMATE_ROOT, FM_HOME or FM_CONFIG_ENV a shell may have exported,
+# defaults to ~/Developer/tools/firstmate-core and ~/.firstmate-core, and
+# always exports FM_BACKEND=hc, so its workers go to herdr-core wherever this
+# Captain's own terminal is. It also drops FirstMate's operational-path
+# overrides (FM_ROOT_OVERRIDE, FM_{STATE,DATA,PROJECTS,CONFIG}_OVERRIDE,
+# FM_PENDING_REPLY_DIR_OVERRIDE, FM_CREW_STATE_{META,STATUS}_OVERRIDE), which
+# FirstMate resolves before FM_HOME; inherited from a classic shell they would
+# point this Captain at classic records. Its separate checkout is also its
+# Captain working directory, which keeps Pi and OMP sessions apart (both group
+# sessions by working directory) and gives it its own FirstMate home tag.
+# `fm-core update` fast-forwards only that checkout, never the dotfiles
+# checkout it shares with fm, then reconciles with install.sh --core.
 set -u
 
-ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
-# shellcheck source=/dev/null
-[ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
-
 self=${BASH_SOURCE[0]}
-while [ -L "$self" ]; do
+ENTRY=fm
+while :; do
+  [ "$(basename "$self")" != fm-core ] || ENTRY=fm-core
+  [ -L "$self" ] || break
   target=$(readlink "$self")
   case $target in
     /*) self=$target ;;
@@ -96,9 +112,26 @@ while [ -L "$self" ]; do
 done
 CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
 
-FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
-FM_HOME="${FM_HOME:-$HOME/.firstmate}"
-FM_BACKEND="${FM_BACKEND:-herdr}"
+if [ "$ENTRY" = fm-core ]; then
+  unset FIRSTMATE_ROOT FM_HOME FM_BACKEND \
+    FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE \
+    FM_PENDING_REPLY_DIR_OVERRIDE FM_CREW_STATE_META_OVERRIDE FM_CREW_STATE_STATUS_OVERRIDE
+  ENV_FILE="$HOME/.config/firstmate-config/core.env"
+else
+  ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+fi
+# shellcheck source=/dev/null
+[ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
+
+if [ "$ENTRY" = fm-core ]; then
+  FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate-core}"
+  FM_HOME="${FM_HOME:-$HOME/.firstmate-core}"
+  FM_BACKEND=hc
+else
+  FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+  FM_HOME="${FM_HOME:-$HOME/.firstmate}"
+  FM_BACKEND="${FM_BACKEND:-herdr}"
+fi
 PI_BIN="${FM_PI_BIN:-pi}"
 EXT_MODE="${FM_PI_EXTENSIONS:-auto}"
 ORIGIN_CWD=$PWD
@@ -155,6 +188,7 @@ case ${1:-} in
   update)
     [ -z "$REQUESTED_MODEL" ] || die "--model applies only to Captain startup, not '$1'"
     shift
+    [ "$ENTRY" = fm ] || exec "$CONFIG_ROOT/bin/fm-update" --core "$@"
     exec "$CONFIG_ROOT/bin/fm-update" "$@"
     ;;
 esac
