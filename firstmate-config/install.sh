@@ -16,8 +16,10 @@
 #   5. selects the herdr runtime backend
 #   6. links the dispatch profiles and seeds the captain file
 #   7. links our skills and the pinned external packs into ~/.agents/skills,
-#      and each role file (roles/<name>/ROLE.md) as OMP agent fm-<name> into
-#      ~/.omp/agent/agents
+#      each role file (roles/<name>/ROLE.md) as OMP agent fm-<name> into
+#      ~/.omp/agent/agents, and each commands/<name>.md as OMP slash command
+#      /<name> into ~/.agents/commands and as Pi prompt template /<name> into
+#      the Pi agent directory's prompts/
 #   8. links the fm launcher onto PATH
 #
 # What it never does: store a credential, touch a project repository, or modify
@@ -40,6 +42,8 @@ FM_HOME="${FM_HOME:-$HOME/.firstmate}"
 FM_BACKEND=herdr
 ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
 SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
+COMMANDS_ROOT="${FM_COMMANDS_ROOT:-$HOME/.agents/commands}"
+PI_PROMPTS_ROOT="${FM_PI_PROMPTS_ROOT:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/prompts}"
 AGENTS_ROOT="${FM_OMP_AGENTS_ROOT:-$HOME/.omp/agent/agents}"
 SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
 BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
@@ -277,14 +281,23 @@ elif would 'seed data/captain.md from the template'; then
   fi
 fi
 
-# --- 7. global skills and role agents ----------------------------------------
-step '7. global skills and role agents'
+# --- 7. global skills, slash commands and role agents -------------------------
+step '7. global skills, slash commands and role agents'
 mkdir -p "$SKILLS_ROOT" 2>/dev/null || true
 
 for skill_dir in "$CONFIG_ROOT"/skills/*/; do
   [ -f "$skill_dir/SKILL.md" ] || continue
   name=$(basename "$skill_dir")
   link_to "${skill_dir%/}" "$SKILLS_ROOT/$name"
+done
+
+# A command file is one Markdown template both harnesses read natively: OMP from
+# ~/.agents/commands, Pi from <agent-dir>/prompts. Each harness loads only its
+# own directory, so the same file is linked into both.
+for command_file in "$CONFIG_ROOT"/commands/*.md; do
+  [ -f "$command_file" ] || continue
+  link_to "$command_file" "$COMMANDS_ROOT/$(basename "$command_file")"
+  link_to "$command_file" "$PI_PROMPTS_ROOT/$(basename "$command_file")"
 done
 
 # Each role file opens with OMP task-agent frontmatter (name: fm-<role>), so

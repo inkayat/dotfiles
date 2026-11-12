@@ -23,9 +23,10 @@ dotfiles/firstmate-config/install.sh
 ```
 
 [`install.sh`](install.sh) creates the operational home, selects Herdr, writes
-`~/.config/firstmate-config/env`, links the routing profile, shared skills and
-OMP role agents, and installs the `fm` link under `~/.local/bin`. Add that
-directory to `PATH`. It never runs the dotfiles root `install.sh`.
+`~/.config/firstmate-config/env`, links the routing profile, shared skills,
+slash commands and OMP role agents, and installs the `fm` link under
+`~/.local/bin`. Add that directory to `PATH`. It never runs the dotfiles root
+`install.sh`.
 
 If FirstMate is missing, installation clones the manifest's official branch at
 the validated commit and tracks that branch. An existing checkout is reported,
@@ -53,6 +54,38 @@ create missing operational-home directories.
 
 Startup `--model` and `--harness` flags work in either order; `--model` is not
 an `update` option.
+
+## Slash commands
+
+[`commands/tlw.md`](commands/tlw.md) is a thin entry for the first-party TLW
+skill, typed in an `fm` Captain session on Pi or OMP:
+
+```text
+/tlw <task description>
+```
+
+It passes the description on as the harness normalizes it, and tells FirstMate to handle it as an ordinary
+request: project, authority, assignment and supervision stay FirstMate's, and
+whoever carries out the job reads the canonical `first-party/tlw/SKILL.md` from
+the `skills` project in the FirstMate registry before anything else. A bare
+`/tlw` only asks which job to run. The entry grants no authority, installs
+neither TLW nor the skill, and changes no routing; it is not `/skill:tlw`.
+
+`install.sh` links that one file into each harness's own user directory, since
+neither reads the other's: OMP `~/.agents/commands` (`FM_COMMANDS_ROOT`) and Pi
+`<agent-dir>/prompts` (`PI_CODING_AGENT_DIR`, default `~/.pi/agent`;
+`FM_PI_PROMPTS_ROOT`). The usual link rules apply, so a file or foreign link
+already there is reported and left alone. There is no separate switch: the entry
+is installed by the same `install.sh` as everything else, with the same
+prerequisites and migration steps. A running session picks it up after Pi's
+`/reload` or a restart of the Captain.
+
+Arguments are normalized by the harness, not forwarded literally. Pi splits them
+shell-style (checked: quotes are dropped, line breaks become spaces). OMP
+documents a similar quote-aware split, then substitutes the arguments into the
+template and renders it through Handlebars, so literal braces in a job description
+may be interpreted there (not checked). Name the job on one line, without braces
+(repository, issue, lane).
 
 ## Architecture
 
@@ -257,4 +290,5 @@ Synthetic only: a throwaway `HOME`, private local Git remotes, and inert
 ```sh
 bash firstmate-config/tests/install-launch.sh
 bash firstmate-config/tests/update.sh
+bash firstmate-config/tests/command-entry.sh   # Pi's own loader; skips without the Pi package
 ```

@@ -19,6 +19,8 @@ check 'fm launcher links into dotfiles' "$(target "$HOME/.local/bin/fm")" "$FMC/
 check 'routing profile links into dotfiles' "$(target "$FMHOME/config/crew-dispatch.json")" "$FMC/firstmate/crew-dispatch.json"
 check 'role agent links into dotfiles' "$(target "$HOME/.omp/agent/agents/fm-senior-fullstack.md")" "$FMC/roles/senior-fullstack/ROLE.md"
 check 'config-owned shared skill links into dotfiles' "$(target "$HOME/.agents/skills/architecture-review")" "$FMC/skills/architecture-review"
+check 'OMP /tlw command links into dotfiles' "$(target "$HOME/.agents/commands/tlw.md")" "$FMC/commands/tlw.md"
+check 'Pi /tlw prompt template links into dotfiles' "$(target "$HOME/.pi/agent/prompts/tlw.md")" "$FMC/commands/tlw.md"
 check 'pinned external skill is linked' "$(cat "$HOME/.agents/skills/demo-method/SKILL.md" | tail -1)" 'Read ../../references/checklist.md'
 check 'external skill ancestor reference resolves from the shared root' \
   "$(cat "$HOME/.agents/skills/demo-method/../../references/checklist.md" 2>&1)" checklist
@@ -39,6 +41,32 @@ done
 # --- idempotent reconcile ------------------------------------------------------
 check 'second install changes nothing' "$("$FMC/install.sh" 2>&1 | tail -1)" 'install: 0 change(s), 0 failure(s)'
 check 'verify reports no drift' "$("$FMC/install.sh" --verify 2>&1 | tail -1)" 'verify: 0 drift item(s), 0 failure(s)'
+
+# --- command entry: drift, relocation and no-clobber ------------------------------
+rm "$HOME/.agents/commands/tlw.md" "$HOME/.pi/agent/prompts/tlw.md"
+out=$("$FMC/install.sh" --verify 2>&1)
+has 'verify reports the missing OMP command link' "$out" "link $HOME/.agents/commands/tlw.md -> $FMC/commands/tlw.md"
+has 'verify reports the missing Pi prompt link' "$out" "link $HOME/.pi/agent/prompts/tlw.md -> $FMC/commands/tlw.md"
+check 'verify creates neither command link' "$([ -e "$HOME/.agents/commands/tlw.md" ] || [ -e "$HOME/.pi/agent/prompts/tlw.md" ] && printf present || printf absent)" absent
+"$FMC/install.sh" > /dev/null 2>&1
+check 'reconcile restores the OMP command link' "$(target "$HOME/.agents/commands/tlw.md")" "$FMC/commands/tlw.md"
+check 'reconcile restores the Pi prompt link' "$(target "$HOME/.pi/agent/prompts/tlw.md")" "$FMC/commands/tlw.md"
+
+rm "$HOME/.pi/agent/prompts/tlw.md"
+PI_CODING_AGENT_DIR="$T/custom-pi-agent" "$FMC/install.sh" > /dev/null 2>&1
+check 'Pi prompt link follows PI_CODING_AGENT_DIR' "$(target "$T/custom-pi-agent/prompts/tlw.md")" "$FMC/commands/tlw.md"
+check 'relocated Pi install leaves the default Pi directory alone' "$([ -e "$HOME/.pi/agent/prompts/tlw.md" ] && printf present || printf absent)" absent
+rm "$T/custom-pi-agent/prompts/tlw.md"
+"$FMC/install.sh" > /dev/null 2>&1
+
+rm "$HOME/.agents/commands/tlw.md"
+printf 'my own /tlw\n' > "$HOME/.agents/commands/tlw.md"
+out=$("$FMC/install.sh" 2>&1); status=$?
+check 'a user-owned command file does not fail the install' "$status" 0
+has 'install reports the user-owned command file' "$out" "$HOME/.agents/commands/tlw.md exists and is not one of ours"
+check 'a user-owned command file is never overwritten' "$(cat "$HOME/.agents/commands/tlw.md")" 'my own /tlw'
+rm "$HOME/.agents/commands/tlw.md"
+"$FMC/install.sh" > /dev/null 2>&1
 
 # --- captain file is machine-owned ---------------------------------------------
 printf 'my own preferences\n' > "$FMHOME/data/captain.md"
@@ -76,5 +104,15 @@ out=$("$FMC/install.sh" 2>&1); status=$?
 check 'install fails on a foreign fm link' "$status" 1
 has 'install names the foreign link' "$out" "$HOME/.local/bin/fm points at $T/old-config/bin/fm"
 check 'foreign fm link is left untouched' "$(readlink "$HOME/.local/bin/fm")" "$T/old-config/bin/fm"
+
+rm "$HOME/.local/bin/fm"
+"$FMC/install.sh" > /dev/null 2>&1
+rm "$HOME/.pi/agent/prompts/tlw.md"
+ln -s "$T/old-config/commands/tlw.md" "$HOME/.pi/agent/prompts/tlw.md"
+out=$("$FMC/install.sh" 2>&1); status=$?
+check 'install fails on a foreign Pi prompt link' "$status" 1
+has 'install names the foreign Pi prompt link' "$out" "$HOME/.pi/agent/prompts/tlw.md points at $T/old-config/commands/tlw.md"
+check 'foreign Pi prompt link is left untouched' "$(readlink "$HOME/.pi/agent/prompts/tlw.md")" "$T/old-config/commands/tlw.md"
+check 'a foreign Pi link does not block the OMP command link' "$(target "$HOME/.agents/commands/tlw.md")" "$FMC/commands/tlw.md"
 
 finish
