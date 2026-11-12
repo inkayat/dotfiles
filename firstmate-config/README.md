@@ -204,6 +204,79 @@ owned that this configuration no longer provides (`~/.local/bin/ponytail-update`
 `~/.agents/commands/bots.md`, `~/.agents/skills/bot-builder`) are not removed by
 anything here.
 
+## Herdr app / herdr-core profile (`fm-core`)
+
+A second, independent Captain for [Herdr app](https://herdr.dev) and its
+herdr-core daemon, beside the classic Herdr `fm`. It runs the same
+configuration (policy, routing, roles, skills, model chain, harness choice);
+only the instance paths and the worker backend differ. It is experimental:
+FirstMate's `hc` backend is, and this profile fixes none of its limits.
+
+```sh
+dotfiles/firstmate-config/install.sh --core            # reconcile fm-core only
+dotfiles/firstmate-config/install.sh --core --verify   # read-only drift report
+fm-core --check
+fm-core                                                # also --harness omp, --model
+fm-core update
+```
+
+| | `fm` | `fm-core` |
+| --- | --- | --- |
+| Operational home (lock, registry, backlog, state, projects) | `~/.firstmate` | `~/.firstmate-core` |
+| Env file | `~/.config/firstmate-config/env` | `~/.config/firstmate-config/core.env` |
+| FirstMate checkout = Captain working directory | `~/Developer/tools/firstmate` | `~/Developer/tools/firstmate-core` |
+| Worker backend (`FM_BACKEND`, `config/backend`) | `herdr` | `hc`, always |
+| Launcher on `PATH` | `fm` | `fm-core` |
+
+`install.sh --core` clones its own official checkout when missing (the same
+pinned manifest), creates the core home, seeds its `data/captain.md` from the
+same template (never copied from the classic home), links the routing profile
+and `fm-core`, and selects `hc`. It needs `herdr-core` (or `hc`, or
+`FM_HC_BIN`) instead of the classic `herdr` CLI and only warns when it is
+missing; FirstMate checks its version and protocol at each hc spawn. It never
+reads `FIRSTMATE_ROOT`, `FM_HOME` or `FM_CONFIG_ENV`, which a shell started
+from a classic Captain exports, and `fm-core` sources only `core.env` and
+exports `FM_BACKEND=hc` whatever that shell or the terminal it runs in says.
+It also drops the operational-path overrides FirstMate resolves before
+`FM_HOME` (`FM_ROOT_OVERRIDE`, `FM_STATE_OVERRIDE`, `FM_DATA_OVERRIDE`,
+`FM_PROJECTS_OVERRIDE`, `FM_CONFIG_OVERRIDE`, `FM_PENDING_REPLY_DIR_OVERRIDE`,
+`FM_CREW_STATE_META_OVERRIDE`, `FM_CREW_STATE_STATUS_OVERRIDE`), so the core
+Captain never inherits a pointer into classic records. Neither installer,
+verify, update nor launcher touches the other profile's home, env file,
+checkout or launcher.
+
+The separate checkout is deliberate. Pi and OMP group sessions by working
+directory, so `--continue`, OMP `autoResume` and the session pickers' default
+scope stay per profile; FirstMate derives its hc/Herdr home tag from the
+checkout path; and `fm-core update` fast-forwards only that checkout. It
+never fetches or moves the dotfiles checkout it shares with `fm`: run
+`fm update` (or update the checkout yourself), then `fm-core update` to
+reconcile core.
+
+Where the `fm-core` Captain's own terminal runs does not choose the worker
+backend; `FM_BACKEND=hc` does. Opening a classic `fm` Captain in a Herdr app
+terminal still sends its workers to classic Herdr. Workers go to herdr-core's
+`default` session, the one Herdr app shows, labelled with this checkout's home
+tag; this profile never sets `HC_SESSION`.
+
+Shared, not isolated - a separate home is logical isolation only:
+
+- Accounts, credentials and quotas; the Pi agent directory (`auth.json`,
+  `settings.json`, `trust.json`, prompts) and OMP's `~/.omp/agent`
+  (config, databases, prompt history).
+- `~/.agents/skills`, `~/.agents/commands`, `~/.pi/agent/prompts` and
+  `~/.omp/agent/agents`, and the pinned external skill cache: reconciled only by
+  `install.sh` without `--core`, used by both Captains and their workers.
+- The herdr-core daemon and its `default` session, Treehouse's pool root, the
+  `no-mistakes` daemon, `gh`, and every other user-level tool. Concurrency
+  there is those tools' business; this profile adds no coordination.
+- The dotfiles checkout.
+
+Not supported here, by FirstMate's `hc` backend: `fm-control exit` and
+`relaunch`, secondmates, and `/afk` while the Captain runs in a Herdr app
+terminal. A new checkout also needs Pi's project trust once. Running tasks never
+move between profiles.
+
 ## Routing
 
 [`crew-dispatch.json`](firstmate/crew-dispatch.json) owns ten semantic categories
@@ -278,6 +351,7 @@ See [primary policy §7](firstmate/primary-policy.md#7-completion).
 | `FM_HOME` (default `~/.firstmate`) | Project registry, preferences, task/runtime/session state and local data |
 | `~/.config/firstmate-config/env` | Machine-local path resolution |
 | `~/.local/share/firstmate-config/skills-src` | Pinned external skill checkouts |
+| `~/.firstmate-core`, `~/.config/firstmate-config/core.env`, `~/Developer/tools/firstmate-core` | The same for `fm-core` ([above](#herdr-app--herdr-core-profile-fm-core)) |
 
 Do not commit credentials, host paths, project knowledge or runtime data here.
 Project instructions outrank global defaults.
@@ -285,10 +359,11 @@ Project instructions outrank global defaults.
 ## Tests
 
 Synthetic only: a throwaway `HOME`, private local Git remotes, and inert
-`pi`/`omp`/`herdr` stubs. No network, real harness or real Herdr is used.
+`pi`/`omp`/`herdr` stubs. No network, real harness, Herdr or herdr-core is used.
 
 ```sh
 bash firstmate-config/tests/install-launch.sh
 bash firstmate-config/tests/update.sh
+bash firstmate-config/tests/core-profile.sh    # fm-core beside fm
 bash firstmate-config/tests/command-entry.sh   # Pi's own loader; skips without the Pi package
 ```

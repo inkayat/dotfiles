@@ -31,10 +31,27 @@
 # restarted through the official procedure (end the session, run `fm` again).
 # fm-update never reimplements any of install.sh's reconciliation steps.
 #
+# --core (passed by `fm-core update`) updates the fm-core profile instead:
+# its own checkout from ~/.config/firstmate-config/core.env (default
+# ~/Developer/tools/firstmate-core; an exported classic FIRSTMATE_ROOT or
+# FM_CONFIG_ENV is ignored), then install.sh --core and --core --verify. The
+# dotfiles checkout is shared with fm, so --core never fetches, checks or
+# moves it; `fm update` owns that step.
+#
 # Usage: fm update [--check] (--check reads local refs only; no fetch/install)
 set -u
 
-ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+CORE=0
+ENTRY=fm
+if [ "${1:-}" = --core ]; then
+  CORE=1
+  ENTRY=fm-core
+  shift
+  unset FIRSTMATE_ROOT
+  ENV_FILE="$HOME/.config/firstmate-config/core.env"
+else
+  ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+fi
 # shellcheck source=/dev/null
 [ ! -f "$ENV_FILE" ] || . "$ENV_FILE"
 
@@ -44,19 +61,23 @@ while [ -L "$self" ]; do
   case $target in /*) self=$target ;; *) self="$(cd "$(dirname "$self")" && pwd)/$target" ;; esac
 done
 CONFIG_ROOT="$(cd "$(dirname "$self")/.." && pwd)"
-FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+if [ "$CORE" -eq 1 ]; then
+  FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate-core}"
+else
+  FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+fi
 export GIT_OPTIONAL_LOCKS=0
 
 OFFICIAL_UPDATED= # "<old> -> <new>" once the official fast-forward has landed
 
 restart_note() {
   printf 'A running Captain keeps the instructions it loaded at startup and was not restarted or notified.\n'
-  printf 'To adopt the update later, end the Captain session, then run fm again.\n'
+  printf 'To adopt the update later, end the Captain session, then run %s again.\n' "$ENTRY"
 }
 die() {
   printf 'fm-update: %s\n' "$1" >&2
   if [ -n "$OFFICIAL_UPDATED" ]; then
-    printf 'fm-update: PARTIAL UPDATE: FirstMate distribution was fast-forwarded (%s), but the dotfiles/firstmate-config update did not complete; fix the error above and re-run fm update\n' "$OFFICIAL_UPDATED" >&2
+    printf 'fm-update: PARTIAL UPDATE: FirstMate distribution was fast-forwarded (%s), but the dotfiles/firstmate-config update did not complete; fix the error above and re-run %s update\n' "$OFFICIAL_UPDATED" "$ENTRY" >&2
     restart_note >&2
   fi
   exit 1
@@ -67,7 +88,7 @@ git_f() { git -C "$FIRSTMATE_ROOT" "$@"; }
 
 CHECK_ONLY=0
 case ${1:-} in
-  --help|-h) printf 'Usage: fm update [--check]\n--check: local guards and source resolution only; no fetch, update or install.\n'; exit 0 ;;
+  --help|-h) printf 'Usage: %s update [--check]\n--check: local guards and source resolution only; no fetch, update or install.\n' "$ENTRY"; exit 0 ;;
   --check) CHECK_ONLY=1 ;;
   '') ;;
   *) die "unknown argument '$1'; see fm update --help" ;;
@@ -116,23 +137,27 @@ fi
 
 DOTFILES_ROOT=$(git -C "$CONFIG_ROOT" rev-parse --show-toplevel 2>/dev/null) \
   || die "$CONFIG_ROOT is not inside a dotfiles Git checkout"
-branch=$(git_c symbolic-ref --quiet --short HEAD) \
-  || die "dotfiles checkout $DOTFILES_ROOT is on a detached HEAD; check out a branch first (nothing was changed)"
-remote=$(git_c config --get "branch.$branch.remote") || remote=origin
-old=$(git_c rev-parse --short HEAD)
-c_git_dir=$(git_c rev-parse --absolute-git-dir) \
-  || die "cannot resolve the Git directory of $DOTFILES_ROOT; nothing was changed"
-for op in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
-  [ ! -e "$c_git_dir/$op" ] || die "dotfiles checkout $DOTFILES_ROOT has an unfinished Git operation ($op); nothing was changed"
-done
+# fm-core shares this checkout with fm and never moves it, so it has no
+# business refusing on the checkout's branch or working-tree state either.
+if [ "$CORE" -eq 0 ]; then
+  branch=$(git_c symbolic-ref --quiet --short HEAD) \
+    || die "dotfiles checkout $DOTFILES_ROOT is on a detached HEAD; check out a branch first (nothing was changed)"
+  remote=$(git_c config --get "branch.$branch.remote") || remote=origin
+  old=$(git_c rev-parse --short HEAD)
+  c_git_dir=$(git_c rev-parse --absolute-git-dir) \
+    || die "cannot resolve the Git directory of $DOTFILES_ROOT; nothing was changed"
+  for op in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+    [ ! -e "$c_git_dir/$op" ] || die "dotfiles checkout $DOTFILES_ROOT has an unfinished Git operation ($op); nothing was changed"
+  done
 
-# Refuse before touching the network: a dirty checkout - anywhere in the
-# dotfiles repository, not only firstmate-config/ - can never be
-# fast-forwarded safely, and this command will not decide what to do with it.
-if [ -n "$(git_c status --porcelain)" ]; then
-  printf 'fm-update: uncommitted local changes in %s\n' "$DOTFILES_ROOT" >&2
-  git_c status --short >&2
-  die 'commit or stash them yourself, then re-run; nothing was changed'
+  # Refuse before touching the network: a dirty checkout - anywhere in the
+  # dotfiles repository, not only firstmate-config/ - can never be
+  # fast-forwarded safely, and this command will not decide what to do with it.
+  if [ -n "$(git_c status --porcelain)" ]; then
+    printf 'fm-update: uncommitted local changes in %s\n' "$DOTFILES_ROOT" >&2
+    git_c status --short >&2
+    die 'commit or stash them yourself, then re-run; nothing was changed'
+  fi
 fi
 
 # --- 1b. remote preconditions; only remote-tracking refs move --------------
@@ -161,18 +186,20 @@ elif ! git_f merge-base --is-ancestor HEAD "$f_upstream"; then
   official_refuse "branch '$f_branch' has diverged from $f_upstream ($f_old vs $f_new); resolve it manually"
 fi
 
-if [ "$CHECK_ONLY" -eq 0 ]; then
-  printf 'Fetching dotfiles %s...\n' "$remote"
-  git_c fetch --quiet --prune "$remote" || die "cannot fetch from '$remote'; nothing was changed"
-fi
-upstream=$(git_c rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) \
-  || die "branch '$branch' has no upstream; set one with 'git branch -u $remote/$branch'; nothing was changed"
-new=$(git_c rev-parse --short "$upstream")
-current=no
-if [ "$(git_c rev-parse HEAD)" = "$(git_c rev-parse "$upstream")" ]; then
-  current=yes
-elif ! git_c merge-base --is-ancestor HEAD "$upstream"; then
-  die "branch '$branch' has diverged from '$upstream' ($old vs $new); resolve it manually; nothing was changed"
+if [ "$CORE" -eq 0 ]; then
+  if [ "$CHECK_ONLY" -eq 0 ]; then
+    printf 'Fetching dotfiles %s...\n' "$remote"
+    git_c fetch --quiet --prune "$remote" || die "cannot fetch from '$remote'; nothing was changed"
+  fi
+  upstream=$(git_c rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) \
+    || die "branch '$branch' has no upstream; set one with 'git branch -u $remote/$branch'; nothing was changed"
+  new=$(git_c rev-parse --short "$upstream")
+  current=no
+  if [ "$(git_c rev-parse HEAD)" = "$(git_c rev-parse "$upstream")" ]; then
+    current=yes
+  elif ! git_c merge-base --is-ancestor HEAD "$upstream"; then
+    die "branch '$branch' has diverged from '$upstream' ($old vs $new); resolve it manually; nothing was changed"
+  fi
 fi
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
@@ -198,15 +225,18 @@ printf '\n'
 
 # --- 3. dotfiles --------------------------------------------------------------
 
+run_install() { # [--verify]; the profile this update was started for
+  if [ "$CORE" -eq 1 ]; then "$CONFIG_ROOT/install.sh" --core "$@"; else "$CONFIG_ROOT/install.sh" "$@"; fi
+}
 reconcile() { # <label> after the checkout is settled at its final commit
   printf '\nReconciling machine state (%s)...\n' "$1"
-  install_out=$("$CONFIG_ROOT/install.sh"); install_status=$?
+  install_out=$(run_install); install_status=$?
   printf '%s\n' "$install_out"
   [ "$install_status" -eq 0 ] \
     || die "install.sh failed after update; repository is at $(git_c rev-parse --short HEAD) but machine state was not reconciled"
 
   printf '\nVerifying reconciled state...\n'
-  verify_out=$("$CONFIG_ROOT/install.sh" --verify); verify_status=$?
+  verify_out=$(run_install --verify); verify_status=$?
   printf '%s\n' "$verify_out"
   [ "$verify_status" -eq 0 ] \
     || die 'install.sh --verify failed after reconciling; investigate machine state'
@@ -216,7 +246,11 @@ reconcile() { # <label> after the checkout is settled at its final commit
   esac
 }
 
-if [ "$current" = yes ]; then
+if [ "$CORE" -eq 1 ]; then
+  printf 'Dotfiles checkout %s left at %s: it is shared with fm, and fm update moves it\n' \
+    "$DOTFILES_ROOT" "$(git_c rev-parse --short HEAD)"
+  reconcile 'fm-core profile'
+elif [ "$current" = yes ]; then
   printf 'Already up to date: %s at %s (%s)\n' "$branch" "$old" "$upstream"
   reconcile 'already up to date'
 else
@@ -230,7 +264,14 @@ fi
 
 # --- 4. summary -------------------------------------------------------------
 
-printf '\nfm update complete: FirstMate distribution %s; dotfiles %s; machine reconciled and verified.\n' \
-  "${OFFICIAL_UPDATED:-already up to date}" "$([ "$current" = yes ] && printf 'already up to date' || printf '%s -> %s' "$old" "$new")"
+if [ "$CORE" -eq 1 ]; then
+  dotfiles_summary='not moved (shared with fm)'
+elif [ "$current" = yes ]; then
+  dotfiles_summary='already up to date'
+else
+  dotfiles_summary="$old -> $new"
+fi
+printf '\n%s update complete: FirstMate distribution %s; dotfiles %s; machine reconciled and verified.\n' \
+  "$ENTRY" "${OFFICIAL_UPDATED:-already up to date}" "$dotfiles_summary"
 [ -z "$OFFICIAL_UPDATED" ] || restart_note
 printf 'Secondmates and projects were not updated.\n'
