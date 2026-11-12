@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# install.sh - reconcile this machine with the firstmate-config in this
+# dotfiles repository. It is independent of the dotfiles root install.sh
+# (Herdr plugins), which it never runs.
+#
+# Rerunning is the normal case, not the exception: every step below states a
+# desired end state and makes only the change needed to reach it, so a second
+# run prints the same report and touches nothing. The only file that is ever
+# created-and-then-left-alone is $FM_HOME/data/captain.md, which belongs to the
+# machine once it exists.
+#
+#   1. checks the toolchain
+#   2. clones the selected FirstMate distribution if missing; existing sources are report-only
+#   3. creates the machine-local operational home
+#   4. writes ~/.config/firstmate-config/env, the machine-local resolution
+#   5. selects the herdr runtime backend
+#   6. links the dispatch profiles and seeds the captain file
+#   7. links our skills and the pinned external packs into ~/.agents/skills,
+#      and each role file (roles/<name>/ROLE.md) as OMP agent fm-<name> into
+#      ~/.omp/agent/agents
+#   8. links the fm launcher onto PATH
+#
+# What it never does: store a credential, touch a project repository, or modify
+# anything tracked in the official FirstMate checkout.
+#
+# Usage:
+#   ./install.sh            reconcile
+#   ./install.sh --verify   report drift without changing anything
+set -u
+
+CONFIG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=firstmate/fm-stack-manifest.sh
+. "$CONFIG_ROOT/firstmate/fm-stack-manifest.sh"
+if ! stack_manifest_load "$CONFIG_ROOT/firstmate/stack-manifest.tsv"; then
+  printf 'install: %s\n' "$SM_LOAD_ERROR" >&2
+  exit 1
+fi
+FIRSTMATE_ROOT="${FIRSTMATE_ROOT:-$HOME/Developer/tools/firstmate}"
+FM_HOME="${FM_HOME:-$HOME/.firstmate}"
+FM_BACKEND=herdr
+ENV_FILE="${FM_CONFIG_ENV:-$HOME/.config/firstmate-config/env}"
+SKILLS_ROOT="${FM_SKILLS_ROOT:-$HOME/.agents/skills}"
+AGENTS_ROOT="${FM_OMP_AGENTS_ROOT:-$HOME/.omp/agent/agents}"
+SKILL_CACHE="${FM_SKILL_CACHE:-$HOME/.local/share/firstmate-config/skills-src}"
+BIN_DIR="${FM_BIN_DIR:-$HOME/.local/bin}"
+# Every git probe below inspects a repository it must not silently write to
+# (an existing official checkout it never updates); a clone still needs a
+# real write, which this setting does not affect.
+export GIT_OPTIONAL_LOCKS=0
+
+VERIFY=0
+[ "${1:-}" != --verify ] || VERIFY=1
+
+changed=0
+failed=0
+ok()      { printf '  ok      %s\n' "$1"; }
+changedf() { printf '  changed %s\n' "$1"; changed=$((changed + 1)); }
+driftf()  { printf '  DRIFT   %s\n' "$1"; changed=$((changed + 1)); }
+warn()    { printf '  warn    %s\n' "$1"; }
+failf()   { printf '  FAIL    %s\n' "$1" >&2; failed=1; }
+step()    { printf '\n%s\n' "$1"; }
+
+# act <description> -- runs the body unless --verify, reporting either way.
+would() { # <description>
+  if [ "$VERIFY" -eq 1 ]; then driftf "$1"; return 1; fi
+  return 0
+}
+
+# --- 1. toolchain -----------------------------------------------------------
+step '1. toolchain'
+for tool in git pi omp herdr; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    ok "$tool present"
+  else
+    failf "$tool is required and not on PATH"
+  fi
+done
+for tool in jq treehouse gh bun; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    ok "$tool present"
+  else
+    warn "$tool is not on PATH; it is needed for full fleet behavior"
+  fi
+done
+[ "$failed" -eq 0 ] || { printf '\ninstall: missing required tools\n' >&2; exit 1; }
+
+# --- 2. FirstMate distribution -----------------------------------------------
+step '2. FirstMate distribution checkout'
+if [ -f "$FIRSTMATE_ROOT/AGENTS.md" ]; then
+  ok "present at $FIRSTMATE_ROOT"
+  head_sha=$(git -C "$FIRSTMATE_ROOT" rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+  dirty=$(git -C "$FIRSTMATE_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  ok "at $head_sha, $dirty tracked modifications"
+  [ "$dirty" = 0 ] || warn 'the FirstMate checkout has local modifications; preserve them before migrating'
+  # Report-only: an already-present checkout is never updated, rewound, or
+  # re-pinned here, no matter how it relates to the validated baseline.
+  relation=$(stack_commit_relation "$FIRSTMATE_ROOT" "$SM_FIRSTMATE_COMMIT")
+  case $relation in
+    exact) ok "matches the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
+    descendant) warn "ahead of the validated baseline commit $SM_FIRSTMATE_COMMIT (unvalidated; not changed automatically)" ;;
+    ancestor) warn "behind the validated baseline commit $SM_FIRSTMATE_COMMIT (not updated automatically; fm update fast-forwards it)" ;;
+    diverged) warn "history has diverged from the validated baseline commit $SM_FIRSTMATE_COMMIT" ;;
+    *) warn "relationship to the validated baseline commit $SM_FIRSTMATE_COMMIT is unknown (that commit is not in this checkout's local history)" ;;
+  esac
+  source_url=$(git -C "$FIRSTMATE_ROOT" remote get-url origin 2>/dev/null || true)
+  source_branch=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  source_head=$(git -C "$FIRSTMATE_ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  if [ "$source_url" != "$SM_FIRSTMATE_REPO" ] || [ "$source_branch" != "$SM_FIRSTMATE_BRANCH" ] || [ "$source_head" != "origin/$SM_FIRSTMATE_BRANCH" ]; then
+    warn "source migration needed: expected $SM_FIRSTMATE_REPO branch $SM_FIRSTMATE_BRANCH and origin/HEAD=origin/$SM_FIRSTMATE_BRANCH; existing checkout left unchanged (see README.md \"Moving a fork installation to official\")"
+  fi
+elif would "clone $SM_FIRSTMATE_REPO into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT"; then
+  mkdir -p "$(dirname "$FIRSTMATE_ROOT")" || failf "cannot create $(dirname "$FIRSTMATE_ROOT")"
+  if git clone -q --branch "$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_REPO" "$FIRSTMATE_ROOT" \
+     && git -C "$FIRSTMATE_ROOT" merge-base --is-ancestor "$SM_FIRSTMATE_COMMIT" "origin/$SM_FIRSTMATE_BRANCH" \
+     && git -C "$FIRSTMATE_ROOT" checkout -q -B "$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_COMMIT" \
+     && git -C "$FIRSTMATE_ROOT" branch --set-upstream-to="origin/$SM_FIRSTMATE_BRANCH" "$SM_FIRSTMATE_BRANCH" >/dev/null \
+     && git -C "$FIRSTMATE_ROOT" remote set-head origin "$SM_FIRSTMATE_BRANCH"; then
+    changedf "cloned FirstMate into $FIRSTMATE_ROOT, pinned to $SM_FIRSTMATE_COMMIT on $SM_FIRSTMATE_BRANCH"
+  else
+    failf "could not clone $SM_FIRSTMATE_REPO and pin it to $SM_FIRSTMATE_COMMIT"
+    # Never leave a half-cloned or unpinned checkout behind for the next run
+    # to mistake for a genuine, present install: a partial clone/pin failure
+    # must not be reportable as success on a later run.
+    rm -rf "$FIRSTMATE_ROOT"
+  fi
+fi
+
+# --- 3. operational home ----------------------------------------------------
+step '3. machine-local operational home'
+if [ -e "$FM_HOME/.fm-secondmate-home" ]; then
+  failf "$FM_HOME is a secondmate home and cannot be a captain home"
+else
+  for dir in state data config projects; do
+    if [ -d "$FM_HOME/$dir" ]; then
+      ok "$FM_HOME/$dir"
+    elif would "create $FM_HOME/$dir"; then
+      if mkdir -p "$FM_HOME/$dir"; then changedf "created $FM_HOME/$dir"; else failf "cannot create $FM_HOME/$dir"; fi
+    fi
+  done
+fi
+
+# --- 4. machine-local environment -------------------------------------------
+write_env_file() { # -> prints ok|drift|changed|fail
+  local env_body
+  env_body=$(cat <<EOF
+# Written by firstmate-config/install.sh. Machine-local: never commit this.
+FIRSTMATE_ROOT="$FIRSTMATE_ROOT"
+FM_CONFIG_ROOT="$CONFIG_ROOT"
+FM_HOME="$FM_HOME"
+FM_BACKEND="$FM_BACKEND"
+export FIRSTMATE_ROOT FM_CONFIG_ROOT FM_HOME FM_BACKEND
+EOF
+  )
+  if [ -f "$ENV_FILE" ] && [ "$(cat "$ENV_FILE")" = "$env_body" ]; then printf ok; return; fi
+  if [ "$VERIFY" -eq 1 ]; then printf drift; return; fi
+  if mkdir -p "$(dirname "$ENV_FILE")" && printf '%s\n' "$env_body" > "$ENV_FILE"; then
+    printf changed
+  else
+    printf fail
+  fi
+}
+
+step '4. machine-local environment'
+case $(write_env_file) in
+  ok) ok "$ENV_FILE" ;;
+  drift) driftf "write $ENV_FILE" ;;
+  changed) changedf "wrote $ENV_FILE" ;;
+  *) failf "cannot write $ENV_FILE" ;;
+esac
+
+# --- 5. runtime backend -----------------------------------------------------
+step '5. runtime backend'
+backend_file="$FM_HOME/config/backend"
+if [ -f "$backend_file" ] && [ "$(tr -d '[:space:]' < "$backend_file")" = "$FM_BACKEND" ]; then
+  ok "config/backend is $FM_BACKEND"
+elif would "set config/backend to $FM_BACKEND"; then
+  if printf '%s\n' "$FM_BACKEND" > "$backend_file"; then
+    changedf "set config/backend to $FM_BACKEND"
+  else
+    failf "cannot write $backend_file"
+  fi
+fi
+
+# --- 6. dispatch profiles and captain file ---------------------------------
+step '6. dispatch profiles and captain file'
+# Shared links are stored relative to their own directory, so a moved HOME or
+# another machine's HOME spelling keeps them valid. A source is linkable only
+# when it exists and its physical path (parent directories resolved, its own
+# final component never followed) stays inside the tree it was named under:
+# this checkout or the external skill cache. An existing link is current when
+# its link chain reaches that physical path without any hop leaving that tree,
+# however it is spelled - absolute, relative, or through an alias inside the
+# tree - and is then left untouched. Any other existing link - wrong, broken,
+# or through a foreign alias - is a failure that is never rewritten: a name
+# alone proves nothing about who owns the link.
+physical() { # <path> -> <path> with its parent directories resolved
+  local dir
+  case $(basename "$1") in
+    # A terminal . or .. names a directory, not an entry: resolve it whole.
+    .|..) (CDPATH='' cd -P "$1" 2>/dev/null && pwd -P); return ;;
+  esac
+  dir=$(CDPATH='' cd -P "$(dirname "$1")" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s\n' "${dir%/}" "$(basename "$1")"
+}
+owned_source() { # <target> ; sets OWNED_ROOT and OWNED, fails when missing or outside its tree
+  OWNED_ROOT='' OWNED=''
+  case $1 in
+    "$CONFIG_ROOT"/*) OWNED_ROOT=$CONFIG_ROOT ;;
+    "$SKILL_CACHE"/*) OWNED_ROOT=$SKILL_CACHE ;;
+    *) return 1 ;;
+  esac
+  [ -e "$1" ] || return 1
+  OWNED_ROOT=$(CDPATH='' cd -P "$OWNED_ROOT" 2>/dev/null && pwd -P) || return 1
+  OWNED=$(physical "$1") || return 1
+  case $OWNED in "$OWNED_ROOT"/*) return 0 ;; esac
+  return 1
+}
+reaches_owned() { # <link> ; its chain reaches $OWNED and never leaves $OWNED_ROOT
+  local p=$1 text hop n=0
+  while [ "$n" -lt 40 ]; do
+    text=$(readlink "$p") || return 1
+    case $text in /*) hop=$text ;; *) hop="$(dirname "$p")/$text" ;; esac
+    hop=$(physical "$hop") || return 1
+    [ "$hop" != "$OWNED" ] || return 0
+    case $hop in "$OWNED_ROOT"/*) ;; *) return 1 ;; esac
+    [ -L "$hop" ] || return 1
+    p=$hop
+    n=$((n + 1))
+  done
+  return 1
+}
+relative_to() { # <physical dir> <physical path> -> <path> spelled from <dir>
+  local from=${1%/}/ up=''
+  while [ "${2#"$from"}" = "$2" ]; do
+    from=${from%/*/}/
+    up="../$up"
+  done
+  printf '%s%s\n' "$up" "${2#"$from"}"
+}
+link_to() { # <target> <link> ; creates a missing link, never rewrites an existing one
+  local target=$1 link=$2 dir
+  if ! owned_source "$target"; then
+    failf "$target is missing or outside its own tree; not linking $link"
+    return 0
+  fi
+  if [ -L "$link" ]; then
+    if reaches_owned "$link"; then
+      ok "$link"
+    else
+      failf "$link points at $(readlink "$link"), not $target; leaving it alone (remove it to relink)"
+    fi
+    return 0
+  fi
+  if [ -e "$link" ]; then
+    warn "$link exists and is not one of ours; leaving it alone"
+    return 0
+  fi
+  would "link $link -> $target" || return 0
+  mkdir -p "$(dirname "$link")"
+  if dir=$(CDPATH='' cd -P "$(dirname "$link")" 2>/dev/null && pwd -P) \
+     && ln -s "$(relative_to "$dir" "$OWNED")" "$link"; then
+    changedf "linked $link"
+  else
+    failf "cannot link $link"
+  fi
+}
+link_to "$CONFIG_ROOT/firstmate/crew-dispatch.json" "$FM_HOME/config/crew-dispatch.json"
+
+captain="$FM_HOME/data/captain.md"
+if [ -e "$captain" ]; then
+  ok 'data/captain.md exists; leaving this machine'"'"'s copy alone'
+elif would 'seed data/captain.md from the template'; then
+  if cp "$CONFIG_ROOT/firstmate/captain.md" "$captain"; then
+    changedf 'seeded data/captain.md'
+  else
+    failf "cannot write $captain"
+  fi
+fi
+
+# --- 7. global skills and role agents ----------------------------------------
+step '7. global skills and role agents'
+mkdir -p "$SKILLS_ROOT" 2>/dev/null || true
+
+for skill_dir in "$CONFIG_ROOT"/skills/*/; do
+  [ -f "$skill_dir/SKILL.md" ] || continue
+  name=$(basename "$skill_dir")
+  link_to "${skill_dir%/}" "$SKILLS_ROOT/$name"
+done
+
+# Each role file opens with OMP task-agent frontmatter (name: fm-<role>), so
+# linking it into OMP's user agent root makes fm-<role> spawnable from every
+# OMP session. A symlink already there is ours only when it points at a
+# roles/<role>/ROLE.md (this or another firstmate-config checkout); any other
+# entry under that name belongs to the user and is left alone.
+for role_file in "$CONFIG_ROOT"/roles/*/ROLE.md; do
+  [ -f "$role_file" ] || continue
+  agent_link="$AGENTS_ROOT/fm-$(basename "$(dirname "$role_file")").md"
+  if [ -L "$agent_link" ]; then
+    case $(readlink "$agent_link") in
+      */roles/*/ROLE.md) ;;
+      *) warn "$agent_link exists and is not one of ours; leaving it alone"; continue ;;
+    esac
+  fi
+  link_to "$role_file" "$agent_link"
+done
+
+lock="$CONFIG_ROOT/skills/external.lock"
+if [ ! -f "$lock" ]; then
+  warn 'no skills/external.lock; skipping external packs'
+else
+  # One checkout per repository, at the pinned commit.
+  repos=$(awk -F'\t' '/^[^#]/ && NF >= 5 {print $2 "\t" $3}' "$lock" | sort -u)
+  printf '%s\n' "$repos" | while IFS="$(printf '\t')" read -r repo sha; do
+    [ -n "${repo:-}" ] || continue
+    dest="$SKILL_CACHE/$(printf '%s' "$repo" | tr '/' '-')"
+    if [ -d "$dest/.git" ] && [ "$(git -C "$dest" rev-parse HEAD 2>/dev/null)" = "$sha" ]; then
+      printf '  ok      %s at %s\n' "$repo" "${sha%"${sha#???????}"}"
+      continue
+    fi
+    if [ "$VERIFY" -eq 1 ]; then printf '  DRIFT   %s is not at %s\n' "$repo" "$sha"; continue; fi
+    mkdir -p "$SKILL_CACHE"
+    if [ ! -d "$dest/.git" ]; then
+      git clone -q "https://github.com/$repo.git" "$dest" || { printf '  FAIL    cannot clone %s\n' "$repo" >&2; continue; }
+    fi
+    git -C "$dest" fetch -q --all 2>/dev/null
+    if git -C "$dest" checkout -q "$sha" 2>/dev/null; then
+      printf '  changed %s pinned to %s\n' "$repo" "${sha%"${sha#???????}"}"
+    else
+      printf '  FAIL    %s has no commit %s\n' "$repo" "$sha" >&2
+    fi
+  done
+
+  while IFS="$(printf '\t')" read -r id repo sha path name; do
+    case ${id:-} in ''|\#*) continue ;; esac
+    [ -n "${name:-}" ] || continue
+    src="$SKILL_CACHE/$(printf '%s' "$repo" | tr '/' '-')/$path"
+    if [ ! -f "$src/SKILL.md" ]; then
+      failf "$id: no SKILL.md at $src"
+      continue
+    fi
+    link_to "$src" "$SKILLS_ROOT/$name"
+  done < "$lock"
+
+  # addyosmani skills link to ../../references/*.md at their repository root.
+  # From ~/.agents/skills/<name>/SKILL.md that path resolves to
+  # ~/.agents/references, so that is where the repository's references belong.
+  addy_refs="$SKILL_CACHE/addyosmani-agent-skills/references"
+  [ ! -d "$addy_refs" ] || link_to "$addy_refs" "$(dirname "$SKILLS_ROOT")/references"
+fi
+
+# --- 8. command launchers ---------------------------------------------------
+step '8. command launchers'
+link_to "$CONFIG_ROOT/bin/fm" "$BIN_DIR/fm"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ok "$BIN_DIR is on PATH" ;;
+  *) warn "$BIN_DIR is not on PATH; add it to your shell profile" ;;
+esac
+
+# --- report -----------------------------------------------------------------
+if [ "$VERIFY" -eq 1 ]; then
+  printf '\nverify: %s drift item(s), %s failure(s)\n' "$changed" "$failed"
+else
+  printf '\ninstall: %s change(s), %s failure(s)\n' "$changed" "$failed"
+fi
+
+[ "$failed" -eq 0 ]

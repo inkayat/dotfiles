@@ -1,0 +1,27 @@
+# firstmate-config official FirstMate source manifest.
+#
+# The single source of the official FirstMate repository, the branch this
+# configuration follows, and the commit it was validated against. install.sh
+# and bin/fm-update read it through firstmate/fm-stack-manifest.sh, the one
+# parsing owner - never duplicate these values as separate hardcoded
+# constants in a script or a test.
+#
+# Deliberately excluded: auth, credentials, machine paths, the project
+# registry, runtime task state, and Captain model routing - those stay owned
+# by crew-dispatch.json, captain-startup-models.tsv, and machine-local state.
+#
+# firstmate_validated_commit is the full commit hash, not a short one:
+# install.sh reasons about it with `git merge-base --is-ancestor`
+# (firstmate/fm-stack-manifest.sh:stack_commit_relation), which needs an
+# unambiguous object id. A fresh install clones at this commit; fm update
+# fast-forwards past it to the branch tip.
+#
+# To move the pin: verify the new commit against a real installation, change
+# it below, and commit. This file is tracked; nothing here is machine-local
+# state.
+#
+# Format, tab-separated key<TAB>value:
+schema_version	4
+firstmate_repo	https://github.com/kunchenguid/firstmate.git
+firstmate_branch	main
+firstmate_validated_commit	bb3b2d6951d021fcd085478b3c04f6ea16b22ba8
